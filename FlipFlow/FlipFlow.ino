@@ -7,14 +7,12 @@
 #include <Preferences.h>
 
 // Configurable defines
-
-// TODO: make this configurable via serial with 'preferences'
-#define WIFI_SSID             "CHANGE ME"
-#define WIFI_PASSWORD         "CHANGE ME"
-#define TIME_ZONE             "GMT0BST,M3.5.0/1,M10.5.0" // UK change for yours
-#define LOOP_PERIOD           60*30 // seconds
-#define GOOGLE_API_KEY        "CHANGE ME"
-#define GOOGLE_CALENDAR_ID    "CHANGE ME"  // Use the calendar ID
+String    wifi_ssid;
+String    wifi_password;
+String    time_zone;
+uint32_t  loop_period;
+String    google_api_key;
+String    google_calendar_id;
 
 // To keep track of which events have been parsed already
 // Another option would be to tag the event as 'triggered' but modifying events
@@ -22,6 +20,7 @@
 uint32_t last_succesfull_update = 0;
 uint32_t current_time = 0;
 Preferences preferences;
+
 String timeToISOString(time_t t);
 void connectToWiFi();
 time_t getRTCTimeUTC();
@@ -32,15 +31,46 @@ void parseCalendarEvents(const DynamicJsonDocument& originalDoc, DynamicJsonDocu
 void triggerSliderSlot(int slot);
 void writeNumberToMemory(const char* key, uint32_t number);
 uint32_t readNumberFromMemory(const char* key, uint32_t defaultValue);
+void writeStringToMemory(const char* key, const char* value);
+String readStringFromMemory(const char* key, const char* defaultValue);
+void preBootConfiguration();
 
 
 // Run once at start
 void setup() {
   // Initialize serial console
   Serial.begin(115200);
+  preBootConfiguration();
+
+  // Load config from memory
+  wifi_ssid          = readStringFromMemory("wifi_ssid",          "not set");
+  wifi_password      = readStringFromMemory("wifi_pass",          "not set");
+  time_zone          = readStringFromMemory("time_zone",          "not set");
+  google_api_key     = readStringFromMemory("google_api_key",     "not set");
+  google_calendar_id = readStringFromMemory("google_cal_id",      "not set");
+  loop_period        = readNumberFromMemory("loop_period",        18000);
+
+  // Check if any configuration value is "not set"
+  while (wifi_ssid == "not set" || wifi_password == "not set" ||
+        time_zone == "not set" || google_api_key == "not set" ||
+        google_calendar_id == "not set") {
+    Serial.println("Configuration incomplete. Please set all configuration values using preBootConfiguration mode.");
+    preBootConfiguration();  // Enter configuration mode again
+    // Reload config from memory
+    Serial.println();
+    Serial.println();
+    Serial.println();
+    wifi_ssid          = readStringFromMemory("wifi_ssid", "not set");
+    wifi_password      = readStringFromMemory("wifi_pass", "not set");
+    time_zone          = readStringFromMemory("time_zone", "not set");
+    google_api_key     = readStringFromMemory("google_api_key", "not set");
+    google_calendar_id = readStringFromMemory("google_cal_id", "not set");
+  }
+
+  // Connect and continue
   connectToWiFi();
   setupNTP();
-  last_succesfull_update = readNumberFromMemory("lastSucUp", 0);
+  last_succesfull_update = readNumberFromMemory("last_up_time", 0);
 }
 
 // Repeats forever
@@ -73,7 +103,7 @@ void loop() {
         // This function doesnt get called so ofte, so it wont deteriorate the flash memory
         // as quickly as if it was called every time we check for a LOOP_TIME block of tasks
         last_succesfull_update = current_time + 60; // Skip one minute to make sure we dont read the same task twice, it rounds so can cause problems
-        writeNumberToMemory("lastSucUp", last_succesfull_update);
+        writeNumberToMemory("last_up_time", last_succesfull_update);
       }
       break; // Exit the retry loop after successful parsing.
     } else {
@@ -86,8 +116,8 @@ void loop() {
     Serial.println("Failed to get tasks from calendar after 3 attempts.");
   }
   
-  // Sleep for LOOP_PERIOD before repeating
-  delay(LOOP_PERIOD * 1000);
+  // Sleep for loop_period before repeating
+  delay(loop_period * 1000);
 }
 
 // Function to convert time_t to ISO8601 string for api call
@@ -99,7 +129,7 @@ String timeToISOString(time_t t) {
 }
 
 void connectToWiFi() {
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  WiFi.begin(wifi_ssid, wifi_password);
   Serial.println("Connecting to wifi...");
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
@@ -115,7 +145,7 @@ time_t getRTCTimeUTC() {
 // setup online clock
 void setupNTP(){
   // set and calcualte time zone
-  setenv("TZ", TIME_ZONE, 1);
+  setenv("TZ", time_zone.c_str(), 1);
   tzset();
   // setup ntp server
   configTime(0, 0, "pool.ntp.org", "time.nist.gov");
@@ -163,8 +193,8 @@ int getTasksFromCalendar(DynamicJsonDocument* doc) {
 
   // https://developers.google.com/calendar/api/v3/reference/events/list
   String url = "https://www.googleapis.com/calendar/v3/calendars/" + 
-                String(GOOGLE_CALENDAR_ID) +
-               "/events?key=" + String(GOOGLE_API_KEY) +
+                String(google_calendar_id) +
+               "/events?key=" + String(google_api_key) +
                "&singleEvents=true" +
                "&maxResults=60" +
                "&timeMin=" + timeMin +
@@ -267,7 +297,7 @@ void writeNumberToMemory(const char* key, uint32_t number) {
   if (preferences.putUInt(key, number)) {
     Serial.printf("Successfully written to \"%s\" [%u]\n", key, number);
   } else {
-    Serial.printf("Failed to write to key \"%s\"\n", key);
+    Serial.printf("Failed to write \"%u\" to key \"%s\"\n", number, key);
   }
   
   // Close the preferences
@@ -285,4 +315,134 @@ uint32_t readNumberFromMemory(const char* key, uint32_t defaultValue) {
   preferences.end();
   Serial.printf("Returning value %u fo key \"%s\"\n", number, key);
   return number;
+}
+void writeStringToMemory(const char* key, const char* value) {
+  if (!preferences.begin("storage", false)) {
+    Serial.println("Failed to open preferences for writing");
+    return;
+  }
+  if (preferences.putString(key, value)) {
+    Serial.printf("Successfully written to \"%s\" [%s]\n", key, value);
+  } else {
+    Serial.printf("Failed to write \"%s\" to key \"%s\"\n",value, key);
+  }
+  preferences.end();
+}
+
+// Function to read a string value from non-volatile memory
+String readStringFromMemory(const char* key, const char* defaultValue) {
+  if (!preferences.begin("storage", true)) {
+    Serial.println("Failed to open preferences for reading");
+    return String(defaultValue);
+  }
+  String value = preferences.getString(key, defaultValue);
+  preferences.end();
+  Serial.printf("Returning value \"%s\" for key \"%s\"\n", value.c_str(), key);
+  return value;
+}
+
+void preBootConfiguration() {
+  Serial.println("Waiting for serial input for 5 seconds. Send any character to enter pre-boot configuration mode...");
+  unsigned long startTime = millis();
+  bool interactiveMode = false;
+  
+  // Wait up to 5 seconds for any serial input
+  while (millis() - startTime < 5000) {
+    if (Serial.available() > 0) {
+      interactiveMode = true;
+      break;
+    }
+  }
+  
+  if (!interactiveMode) {
+    Serial.println("No serial input received. Continuing boot...");
+    return;
+  }
+  
+  // As soon as any character is detected, print the helper list.
+  Serial.println("Entering pre-boot configuration mode.");
+  Serial.println("Available commands:");
+  Serial.println("  get <key>            -- Retrieve the value of a configuration key.");
+  Serial.println("  set <key> <value>    -- Set the value of a configuration key.");
+  Serial.println("Valid keys:");
+  Serial.println("  wifi_ssid            (string)         Your wifi name");
+  Serial.println("  wifi_pass            (string)         Your wifi password");
+  Serial.println("  time_zone            (string)         Your time zone in POSIX timezone string format");
+  Serial.println("  google_api_key       (string)         Google API key");
+  Serial.println("  google_cal_id        (string)         Google calendar ID (found on your calendar)");
+  Serial.println("  last_up_time         (number)         Time in UTC, probs ignore this unless you are debugging code");
+  Serial.println("  loop_period          (number)         Time seconds it takes to update the board, probs ignore this...");
+  Serial.println("Type 'exit' to leave configuration mode.");
+  
+  // Interactive command loop
+  while (true) {
+    if (Serial.available() > 0) {
+      String input = Serial.readStringUntil('\n');
+      input.trim();
+      
+      if (input.equalsIgnoreCase("exit")) {
+        Serial.println("Exiting pre-boot configuration mode.");
+        break;
+      }
+      
+      // Expect command format: <command> <key> [value]
+      int firstSpace = input.indexOf(' ');
+      if (firstSpace == -1) {
+        Serial.println("Invalid command format. Use 'get <key>' or 'set <key> <value>'.");
+        continue;
+      }
+      
+      String command = input.substring(0, firstSpace);
+      command.trim();
+      String remainder = input.substring(firstSpace + 1);
+      remainder.trim();
+      
+      if (command.equalsIgnoreCase("get")) {
+        String key = remainder;
+        if (key.equals("wifi_ssid") || key.equals("wifi_pass") ||
+            key.equals("time_zone") || key.equals("google_api_key") ||
+            key.equals("google_cal_id")) {
+          String value = readStringFromMemory(key.c_str(), "Not set");
+          Serial.print(key);
+          Serial.print(" = ");
+          Serial.println(value);
+        }
+        else if (key.equals("last_up_time")) {
+          uint32_t num = readNumberFromMemory(key.c_str(), 0);
+          Serial.print(key);
+          Serial.print(" = ");
+          Serial.println(num);
+        }
+        else {
+          Serial.println("Invalid key.");
+        }
+      }
+      else if (command.equalsIgnoreCase("set")) {
+        int secondSpace = remainder.indexOf(' ');
+        if (secondSpace == -1) {
+          Serial.println("Invalid set command format. Usage: set <key> <value>");
+          continue;
+        }
+        String key = remainder.substring(0, secondSpace);
+        key.trim();
+        String value = remainder.substring(secondSpace + 1);
+        value.trim();
+        if (key.equals("wifi_ssid") || key.equals("wifi_pass") ||
+            key.equals("time_zone") || key.equals("google_api_key") ||
+            key.equals("google_cal_id")) {
+          writeStringToMemory(key.c_str(), value.c_str());
+        }
+        else if (key.equals("last_up_time") || key.equals("loop_period") ) {
+          uint32_t num = (uint32_t)value.toInt();
+          writeNumberToMemory(key.c_str(), num);
+        }
+        else {
+          Serial.println("Invalid key.");
+        }
+      }
+      else {
+        Serial.println("Unknown command. Use 'get' or 'set'.");
+      }
+    }
+  }
 }

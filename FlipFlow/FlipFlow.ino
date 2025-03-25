@@ -14,6 +14,15 @@ uint32_t  loop_period;
 String    google_api_key;
 String    google_calendar_id;
 
+
+// Mux pin mapping
+const int MUX_SIO = 15;
+const int MUX_S3 = 2;
+const int MUX_S2 = 4;
+const int MUX_S1 = 16;
+const int MUX_S0 = 17;
+const int MUX_EN = 5;
+
 // To keep track of which events have been parsed already
 // Another option would be to tag the event as 'triggered' but modifying events
 // require proper oath API stuff and I cba
@@ -34,10 +43,19 @@ uint32_t readNumberFromMemory(const char* key, uint32_t defaultValue);
 void writeStringToMemory(const char* key, const char* value);
 String readStringFromMemory(const char* key, const char* defaultValue);
 void preBootConfiguration();
+void toggleMuxPort(int portNumber, int durationMs);
 
 
 // Run once at start
 void setup() {
+  // Setup mux pins
+  pinMode(MUX_SIO, OUTPUT);
+  pinMode(MUX_S3, OUTPUT);
+  pinMode(MUX_S2, OUTPUT);
+  pinMode(MUX_S1, OUTPUT);
+  pinMode(MUX_S0, OUTPUT);
+  pinMode(MUX_EN, OUTPUT);
+
   // Initialize serial console
   Serial.begin(115200);
   preBootConfiguration();
@@ -280,11 +298,6 @@ void parseCalendarEvents(DynamicJsonDocument& originalDoc, DynamicJsonDocument& 
   parsedDoc["taskCount"] = untriggered;
 }
 
-void triggerSliderSlot(int slot){
-  Serial.print("Triggering slot ");
-  Serial.println(slot);
-}
-
 // Function to write a uint32_t number to non-volatile memory
 void writeNumberToMemory(const char* key, uint32_t number) {
   // Open the namespace "storage" for writing
@@ -445,4 +458,56 @@ void preBootConfiguration() {
       }
     }
   }
+}
+
+void toggleMuxPort(int portNumber, int durationMs) {
+  // Define pin mappings
+  const int MUX_SIO = 15;
+  const int MUX_S3  = 2;
+  const int MUX_S2  = 4;
+  const int MUX_S1  = 16;
+  const int MUX_S0  = 17;
+  const int MUX_EN  = 5;
+
+  // Ensure port number is valid (0 to 31)
+  if (portNumber < 0 || portNumber > 31) {
+    Serial.println("Invalid port number.");
+    return;
+  }
+
+  // Set pin modes
+  pinMode(MUX_SIO, OUTPUT);
+  pinMode(MUX_S3, OUTPUT);
+  pinMode(MUX_S2, OUTPUT);
+  pinMode(MUX_S1, OUTPUT);
+  pinMode(MUX_S0, OUTPUT);
+  pinMode(MUX_EN, OUTPUT);
+
+  // Set the multiplexer address
+  digitalWrite(MUX_S0, portNumber & 0x01);
+  digitalWrite(MUX_S1, (portNumber >> 1) & 0x01);
+  digitalWrite(MUX_S2, (portNumber >> 2) & 0x01);
+  digitalWrite(MUX_S3, (portNumber >> 3) & 0x01);
+
+  // Enable the multiplexer
+  digitalWrite(MUX_EN, LOW);
+
+  // Activate the port
+  digitalWrite(MUX_SIO, HIGH);
+  delay(durationMs);
+  digitalWrite(MUX_SIO, LOW);
+
+  // Disable the multiplexer
+  digitalWrite(MUX_EN, HIGH);
+}
+
+void triggerSliderSlot(int slot){
+  Serial.printf("Triggering slot %d\n", slot);
+  toggleMuxPort(slot, 800);
+  delay(100);
+  toggleMuxPort(slot, 400);
+  delay(100);
+  toggleMuxPort(slot, 400);
+  delay(100);
+  toggleMuxPort(slot, 400);
 }

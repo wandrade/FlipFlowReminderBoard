@@ -16,12 +16,13 @@ String    google_calendar_id;
 
 
 // Mux pin mapping
-const int MUX_SIO = 15;
-const int MUX_S3 = 2;
-const int MUX_S2 = 4;
-const int MUX_S1 = 16;
-const int MUX_S0 = 17;
-const int MUX_EN = 5;
+const int MUX_SIO = 27;
+const int MUX_S3 = 14;
+const int MUX_S2 = 32;
+const int MUX_S1 = 33;
+const int MUX_S0 = 25;
+const int MUX_EN = 26;
+const int LED_PIN =  2;
 
 // To keep track of which events have been parsed already
 // Another option would be to tag the event as 'triggered' but modifying events
@@ -44,10 +45,12 @@ void writeStringToMemory(const char* key, const char* value);
 String readStringFromMemory(const char* key, const char* defaultValue);
 void preBootConfiguration();
 void toggleMuxPort(int portNumber, int durationMs);
-
+void flashLED(int numFlashes, int intervalMs);
 
 // Run once at start
 void setup() {
+  pinMode(LED_PIN,OUTPUT);
+
   // Setup mux pins
   pinMode(MUX_SIO, OUTPUT);
   pinMode(MUX_S3, OUTPUT);
@@ -58,9 +61,11 @@ void setup() {
 
   // Initialize serial console
   Serial.begin(115200);
+  flashLED(1, 50);
   preBootConfiguration();
 
   // Load config from memory
+  flashLED(2, 50);
   wifi_ssid          = readStringFromMemory("wifi_ssid",          "not set");
   wifi_password      = readStringFromMemory("wifi_pass",          "not set");
   time_zone          = readStringFromMemory("time_zone",          "not set");
@@ -72,6 +77,7 @@ void setup() {
   while (wifi_ssid == "not set" || wifi_password == "not set" ||
         time_zone == "not set" || google_api_key == "not set" ||
         google_calendar_id == "not set") {
+    flashLED(3, 500);
     Serial.println("Configuration incomplete. Please set all configuration values using preBootConfiguration mode.");
     preBootConfiguration();  // Enter configuration mode again
     // Reload config from memory
@@ -150,7 +156,7 @@ void connectToWiFi() {
   WiFi.begin(wifi_ssid, wifi_password);
   Serial.println("Connecting to wifi...");
   while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
+    flashLED(1, 100);
   }
   Serial.println("Connected");
 }
@@ -189,7 +195,7 @@ time_t syncRTC() {
       }
     }
     Serial.println("Retrying to get online time...");
-    delay(1000);
+    flashLED(3, 1000);
   }
   Serial.println("Failed to get online time after 3 attempts. Using previous RTC time.");
   time_t previousTime = getRTCTimeUTC();
@@ -358,9 +364,13 @@ void preBootConfiguration() {
   Serial.println("Waiting for serial input for 5 seconds. Send any character to enter pre-boot configuration mode...");
   unsigned long startTime = millis();
   bool interactiveMode = false;
+  // Clean serial buffer
+  while (Serial.available() > 0) {
+    Serial.read();
+  }
   
   // Wait up to 5 seconds for any serial input
-  while (millis() - startTime < 5000) {
+  while (millis() - startTime < 3000) {
     if (Serial.available() > 0) {
       interactiveMode = true;
       break;
@@ -372,6 +382,7 @@ void preBootConfiguration() {
     return;
   }
   
+  digitalWrite(LED_PIN, HIGH);
   // As soon as any character is detected, print the helper list.
   Serial.println("Entering pre-boot configuration mode.");
   Serial.println("Available commands:");
@@ -458,30 +469,10 @@ void preBootConfiguration() {
       }
     }
   }
+  digitalWrite(LED_PIN, LOW);
 }
 
 void toggleMuxPort(int portNumber, int durationMs) {
-  // Define pin mappings
-  const int MUX_SIO = 15;
-  const int MUX_S3  = 2;
-  const int MUX_S2  = 4;
-  const int MUX_S1  = 16;
-  const int MUX_S0  = 17;
-  const int MUX_EN  = 5;
-
-  // Ensure port number is valid (0 to 31)
-  if (portNumber < 0 || portNumber > 31) {
-    Serial.println("Invalid port number.");
-    return;
-  }
-
-  // Set pin modes
-  pinMode(MUX_SIO, OUTPUT);
-  pinMode(MUX_S3, OUTPUT);
-  pinMode(MUX_S2, OUTPUT);
-  pinMode(MUX_S1, OUTPUT);
-  pinMode(MUX_S0, OUTPUT);
-  pinMode(MUX_EN, OUTPUT);
 
   // Set the multiplexer address
   digitalWrite(MUX_S0, portNumber & 0x01);
@@ -503,11 +494,15 @@ void toggleMuxPort(int portNumber, int durationMs) {
 
 void triggerSliderSlot(int slot){
   Serial.printf("Triggering slot %d\n", slot);
-  toggleMuxPort(slot, 800);
+  toggleMuxPort(slot, 500);
   delay(100);
-  toggleMuxPort(slot, 400);
-  delay(100);
-  toggleMuxPort(slot, 400);
-  delay(100);
-  toggleMuxPort(slot, 400);
+}
+
+void flashLED(int numFlashes, int intervalMs) {
+  for (int i = 0; i < numFlashes; i++) {
+    digitalWrite(LED_PIN, HIGH);
+    delay(intervalMs);
+    digitalWrite(LED_PIN, LOW);
+    delay(intervalMs);
+  }
 }
